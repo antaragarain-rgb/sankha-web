@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">YOUR COMMUNITY, YOUR SPACE</p>
+  <h1>Connect. Share.<br><span>Be yourself.</span></h1>
+  <p class="muted">Welcome to Sankha Web — a place to share moments and ideas.</p>
+</section>
+{% if current_user.is_authenticated %}
+<section class="panel composer">
+  <h2>Create a post</h2>
+  <form method="post" action="{{ url_for('create_post') }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <textarea name="body" maxlength="1000" placeholder="What's on your mind?"></textarea>
+    <div class="compose-bottom">
+      <label class="file-label">Add a photo <input type="file" name="image" accept="image/png,image/jpeg,image/webp"></label>
+      <button class="primary" type="submit">Publish post</button>
+    </div>
+  </form>
+</section>
+{% else %}
+<section class="panel join-panel">
+  <div><h2>Your story starts here.</h2><p class="muted">Create an account to publish posts and like the community feed.</p></div>
+  <a class="primary button-link" href="{{ url_for('register') }}">Create account</a>
+</section>
+{% endif %}
+<section class="feed">
+  <div class="section-heading"><h2>Community feed</h2><span class="muted">{{ posts|length }} recent posts</span></div>
+  {% for post in posts %}
+  <article class="panel post">
+    <div class="post-head">
+      <a class="avatar" href="{{ url_for('profile', username=post.author.username) }}">{{ post.author.username[:1]|upper }}</a>
+      <div><a class="username" href="{{ url_for('profile', username=post.author.username) }}">@{{ post.author.username }}</a><div class="muted small">{{ post.created_at.strftime('%d %b %Y · %H:%M') }} UTC</div></div>
+    </div>
+    {% if post.body %}<p class="post-body">{{ post.body }}</p>{% endif %}
+    {% if post.image %}<img class="post-image" src="{{ url_for('static', filename='uploads/' ~ post.image) }}" alt="Image shared in a post">{% endif %}
+    <div class="post-actions">
+      {% if current_user.is_authenticated %}
+      <form method="post" action="{{ url_for('toggle_like', post_id=post.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="like-button {{ 'liked' if liked_by_me(post) else '' }}" type="submit">{{ '♥ Liked' if liked_by_me(post) else '♡ Like' }} · {{ like_count(post) }}</button>
+      </form>
+      {% else %}<span class="muted">♡ {{ like_count(post) }} likes</span>{% endif %}
+      {% if current_user.is_authenticated and current_user.id == post.user_id %}
+      <form method="post" action="{{ url_for('delete_post', post_id=post.id) }}" onsubmit="return confirm('Delete this post?')">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="delete-button" type="submit">Delete</button>
+      </form>
+      {% endif %}
+    </div>
+  </article>
+  {% else %}
+  <div class="empty panel"><h3>No posts yet</h3><p class="muted">Be the first to share something with the community.</p></div>
+  {% endfor %}
+</section>
+{% endblock %}

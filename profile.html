@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}@{{ profile_user.username }} · {{ site_name }}{% endblock %}
+{% block content %}
+<section class="profile-hero panel">
+  <div class="profile-avatar">{{ profile_user.username[:1]|upper }}</div>
+  <p class="eyebrow">MEMBER PROFILE</p><h1>@{{ profile_user.username }}</h1>
+  <p class="muted">{{ profile_user.bio or "No bio added yet." }}</p>
+  <p class="muted small">{{ posts|length }} posts · Joined {{ profile_user.created_at.strftime('%b %Y') }}</p>
+  {% if current_user.is_authenticated and current_user.id == profile_user.id %}
+  <form method="post" class="bio-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="bio">Edit your bio</label><input id="bio" name="bio" maxlength="160" value="{{ profile_user.bio or '' }}" placeholder="A little about you">
+    <button class="secondary" type="submit">Save bio</button>
+  </form>
+  {% endif %}
+</section>
+<section class="feed">
+  <div class="section-heading"><h2>Posts</h2></div>
+  {% for post in posts %}
+  <article class="panel post">
+    <div class="post-head"><div class="avatar">{{ profile_user.username[:1]|upper }}</div><div><span class="username">@{{ profile_user.username }}</span><div class="muted small">{{ post.created_at.strftime('%d %b %Y · %H:%M') }} UTC</div></div></div>
+    {% if post.body %}<p class="post-body">{{ post.body }}</p>{% endif %}
+    {% if post.image %}<img class="post-image" src="{{ url_for('static', filename='uploads/' ~ post.image) }}" alt="Image shared in a post">{% endif %}
+    <div class="post-actions"><span class="muted">♡ {{ like_count(post) }} likes</span></div>
+  </article>
+  {% else %}<div class="empty panel"><p class="muted">No posts here yet.</p></div>{% endfor %}
+</section>
+{% endblock %}

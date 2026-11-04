@@ -1,0 +1,241 @@
+import os
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+
+from flask import Flask, render_template, redirect, url_for, request, flash, abort
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from flask_wtf.csrf import CSRFProtect
+from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
+from PIL import Image, UnidentifiedImageError
+
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = BASE_DIR / "static" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-only-change-this-secret")
+app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
+    "DATABASE_URL", f"sqlite:///{BASE_DIR / 'sankha_web.db'}"
+).replace("postgres://", "postgresql://", 1)
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB upload limit
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") == "production"
+
+db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
+login_manager.login_message_category = "info"
+csrf = CSRFProtect(app)
+
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
+
+
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(24), unique=True, nullable=False, index=True)
+    password_hash = db.Column(db.String(255), nullable=False)
+    bio = db.Column(db.String(160), default="")
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class Post(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    body = db.Column(db.String(1000), default="")
+    image = db.Column(db.String(255))
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    author = db.relationship("User", backref=db.backref("posts", lazy=True, cascade="all, delete-orphan"))
+
+
+class Like(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    post_id = db.Column(db.Integer, db.ForeignKey("post.id"), nullable=False)
+    __table_args__ = (db.UniqueConstraint("user_id", "post_id", name="unique_user_post_like"),)
+
+
+@login_manager.user_loader
+def load_user(user_id):
+    return db.session.get(User, int(user_id))
+
+
+@app.context_processor
+def inject_site_name():
+    return {"site_name": "Sankha Web"}
+
+
+@app.route("/")
+def index():
+    posts = Post.query.order_by(Post.created_at.desc()).limit(100).all()
+    return render_template("index.html", posts=posts)
+
+
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if not (3 <= len(username) <= 24) or not username.replace("_", "").isalnum():
+            flash("Username must be 3–24 characters and use letters, numbers or underscores.", "error")
+        elif len(password) < 10:
+            flash("Use a password with at least 10 characters.", "error")
+        elif User.query.filter_by(username=username).first():
+            flash("That username is already taken.", "error")
+        else:
+            user = User(username=username, password_hash=generate_password_hash(password))
+            db.session.add(user)
+            db.session.commit()
+            login_user(user)
+            flash("Welcome to Sankha Web!", "success")
+            return redirect(url_for("index"))
+    return render_template("register.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        user = User.query.filter_by(username=username).first()
+        if user and check_password_hash(user.password_hash, password):
+            login_user(user)
+            return redirect(request.args.get("next") or url_for("index"))
+        flash("Incorrect username or password.", "error")
+    return render_template("login.html")
+
+
+@app.post("/logout")
+@login_required
+def logout():
+    logout_user()
+    flash("You have been logged out.", "success")
+    return redirect(url_for("index"))
+
+
+def save_image(file):
+    if not file or not file.filename:
+        return None
+    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if ext not in ALLOWED_EXTENSIONS:
+        raise ValueError("Please upload a PNG, JPG or WEBP image.")
+    try:
+        image = Image.open(file.stream)
+        image.verify()
+        file.stream.seek(0)
+        image = Image.open(file.stream)
+        image.thumbnail((1600, 1600))
+        filename = secrets.token_hex(16) + "." + ext
+        image.convert("RGB").save(UPLOAD_DIR / filename, format="JPEG", quality=88)
+        return filename
+    except (UnidentifiedImageError, OSError):
+        raise ValueError("That file is not a valid image.")
+
+
+@app.post("/post")
+@login_required
+def create_post():
+    body = request.form.get("body", "").strip()
+    if len(body) > 1000:
+        flash("Posts must be 1,000 characters or fewer.", "error")
+        return redirect(url_for("index"))
+    try:
+        image_name = save_image(request.files.get("image"))
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("index"))
+    if not body and not image_name:
+        flash("Write something or choose an image first.", "error")
+        return redirect(url_for("index"))
+    post = Post(body=body, image=image_name, author=current_user)
+    db.session.add(post)
+    db.session.commit()
+    flash("Your post has been published.", "success")
+    return redirect(url_for("index"))
+
+
+@app.post("/like/<int:post_id>")
+@login_required
+def toggle_like(post_id):
+    post = db.session.get(Post, post_id)
+    if not post:
+        abort(404)
+    like = Like.query.filter_by(user_id=current_user.id, post_id=post.id).first()
+    if like:
+        db.session.delete(like)
+    else:
+        db.session.add(Like(user_id=current_user.id, post_id=post.id))
+    db.session.commit()
+    return redirect(request.referrer or url_for("index"))
+
+
+@app.post("/delete/<int:post_id>")
+@login_required
+def delete_post(post_id):
+    post = db.session.get(Post, post_id)
+    if not post:
+        abort(404)
+    if post.user_id != current_user.id:
+        abort(403)
+    if post.image:
+        try:
+            (UPLOAD_DIR / post.image).unlink(missing_ok=True)
+        except OSError:
+            pass
+    Like.query.filter_by(post_id=post.id).delete()
+    db.session.delete(post)
+    db.session.commit()
+    flash("Post deleted.", "success")
+    return redirect(url_for("index"))
+
+
+@app.route("/u/<username>", methods=["GET", "POST"])
+def profile(username):
+    user = User.query.filter_by(username=username).first_or_404()
+    if request.method == "POST":
+        if not current_user.is_authenticated or current_user.id != user.id:
+            abort(403)
+        bio = request.form.get("bio", "").strip()
+        if len(bio) > 160:
+            flash("Bio must be 160 characters or fewer.", "error")
+        else:
+            user.bio = bio
+            db.session.commit()
+            flash("Profile updated.", "success")
+        return redirect(url_for("profile", username=username))
+    posts = Post.query.filter_by(user_id=user.id).order_by(Post.created_at.desc()).all()
+    return render_template("profile.html", profile_user=user, posts=posts)
+
+
+@app.context_processor
+def inject_like_helper():
+    def liked_by_me(post):
+        if not current_user.is_authenticated:
+            return False
+        return Like.query.filter_by(user_id=current_user.id, post_id=post.id).first() is not None
+    def like_count(post):
+        return Like.query.filter_by(post_id=post.id).count()
+    return {"liked_by_me": liked_by_me, "like_count": like_count}
+
+
+@app.errorhandler(413)
+def too_large(_error):
+    flash("Image is too large. Maximum upload size is 5 MB.", "error")
+    return redirect(url_for("index"))
+
+
+with app.app_context():
+    db.create_all()
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -1,14 +1,37 @@
+
 {% extends "base.html" %}
 {% block title %}Join · {{ site_name }}{% endblock %}
 {% block content %}
 <section class="auth panel">
-  <p class="eyebrow">CREATE YOUR ACCOUNT</p><h1>Join Sankha Web</h1>
+  <p class="eyebrow">CREATE YOUR ACCOUNT</p>
+  <h1>Join Sankha Web</h1>
+
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <label>Username</label><input name="username" minlength="3" maxlength="24" required autocomplete="username" placeholder="e.g. sankha_01">
-    <label>Password</label><input type="password" name="password" minlength="10" required autocomplete="new-password" placeholder="At least 10 characters">
-    <button class="primary full" type="submit">Create account</button>
+
+    <label>Username</label>
+    <input name="username" minlength="3" maxlength="24"
+           required autocomplete="username"
+           placeholder="e.g. sankha_01">
+
+    <label>Mobile Number</label>
+    <input type="tel" name="phone" required
+           inputmode="numeric" pattern="[0-9]{10}"
+           maxlength="10" placeholder="10-digit mobile number">
+
+    <label>Password</label>
+    <input type="password" name="password" minlength="10"
+           required autocomplete="new-password"
+           placeholder="At least 10 characters">
+
+    <button class="primary full" type="submit">
+      Create account
+    </button>
   </form>
-  <p class="muted">Already registered? <a href="{{ url_for('login') }}">Log in</a></p>
+
+  <p class="muted">
+    Already registered?
+    <a href="{{ url_for('login') }}">Log in</a>
+  </p>
 </section>
 {% endblock %}
